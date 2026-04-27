@@ -1,0 +1,18 @@
+# dependencies
+node_modules/
+
+# Next.js build output
+.next/
+out/
+
+# environment files — never commit secrets
+.env
+.env.local
+.env.*.local
+
+# Claude Code internal files
+.claude/
+
+# OS / editor
+.DS_Store
+Thumbs.db

@@ -1,9 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { extractText, getDocumentProxy } from "unpdf";
 import { ResumeAnalysis, CVSection, FeedbackItem } from "@/types/resume";
 
 export const runtime = "nodejs";
-
-const client = new Anthropic();
 
 function buildPrompt(resumeText: string): string {
   const date = new Date().toLocaleDateString("en-US", {
@@ -109,6 +108,7 @@ function enforceIntegrity(
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const client = new Anthropic();
   try {
     const formData = await request.formData();
     const file = formData.get("file");
@@ -120,13 +120,11 @@ export async function POST(request: Request): Promise<Response> {
       return Response.json({ error: "Only PDF files are accepted" }, { status: 400 });
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
+    const buffer = await file.arrayBuffer();
 
-    // pdf-parse v2 exports a class-based ESM API
-    const { PDFParse } = await import("pdf-parse");
-    const parser = new PDFParse({ data: buffer });
-    const parsed = await parser.getText();
-    const resumeText = parsed.text.slice(0, 12000);
+    const pdf = await getDocumentProxy(new Uint8Array(buffer));
+    const { text } = await extractText(pdf, { mergePages: true });
+    const resumeText = text.slice(0, 12000);
 
     if (!resumeText.trim()) {
       return Response.json({ error: "Could not extract text from PDF" }, { status: 422 });

@@ -58,7 +58,10 @@ export function useFileUpload(): UseFileUploadReturn {
       clearInterval(progressInterval);
       clearTimeout(parsingTimeout);
 
-      if (!response.ok) throw new Error(`Server error: ${response.status}`);
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({ error: response.statusText }));
+        throw new Error(`API ${response.status}: ${body.error ?? "unknown"}`);
+      }
 
       const data: UploadResult = await response.json();
       setResult(data);
