@@ -2,16 +2,37 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { HistoryEntry, ResumeAnalysis, CVSection } from "@/types/resume";
+import { createClient } from "@/utils/supabase/client";
 
-const STORAGE_KEY = "resumeiq:history";
+const LOCAL_STORAGE_KEY = "resumeiq:history"; // legacy — kept for one-time migration
 const MAX_ENTRIES = 50;
 
-// ── Storage helpers (SSR-safe) ────────────────────────────────────────────
+// Shape returned by Supabase
+interface DbRow {
+  id: string;
+  user_id: string;
+  file_name: string;
+  created_at: string;
+  analysis: ResumeAnalysis;
+  cv_sections: CVSection[];
+}
 
-function readStorage(): HistoryEntry[] {
+function rowToEntry(row: DbRow): HistoryEntry {
+  return {
+    id: row.id,
+    fileName: row.file_name,
+    createdAt: row.created_at,
+    analysis: row.analysis,
+    cvSections: row.cv_sections,
+  };
+}
+
+// ── Legacy localStorage helpers (only used to migrate then forget) ────────
+
+function readLegacyLocalStorage(): HistoryEntry[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = window.localStorage.getItem(LOCAL_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
@@ -20,23 +41,16 @@ function readStorage(): HistoryEntry[] {
   }
 }
 
-function writeStorage(entries: HistoryEntry[]): void {
+function clearLegacyLocalStorage(): void {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+    window.localStorage.removeItem(LOCAL_STORAGE_KEY);
   } catch {
-    // Quota exceeded or storage unavailable — silently ignore
+    // ignore
   }
 }
 
-function generateId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-// ── Hook ──────────────────────────────────────────────────────────────────
+// ── Public hook ───────────────────────────────────────────────────────────
 
 export interface AddHistoryParams {
   fileName: string;
@@ -46,65 +60,142 @@ export interface AddHistoryParams {
 
 export interface UseHistoryReturn {
   entries: HistoryEntry[];
-  add: (params: AddHistoryParams) => HistoryEntry;
-  remove: (id: string) => void;
-  clear: () => void;
-  getById: (id: string) => HistoryEntry | undefined;
+  loading: boolean;
+  error: string | null;
+  migratedCount: number;
+  add: (params: AddHistoryParams) => Promise<HistoryEntry | null>;
+  remove: (id: string) => Promise<void>;
+  clear: () => Promise<void>;
+  getById: (id: string) => Promise<HistoryEntry | undefined>;
 }
 
 export function useHistory(): UseHistoryReturn {
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [migratedCount, setMigratedCount] = useState(0);
 
-  // Hydrate on mount (client-only)
+  // Load entries on mount, with one-shot localStorage migration
   useEffect(() => {
-    setEntries(readStorage());
-  }, []);
+    let cancelled = false;
+    const supabase = createClient();
 
-  // Sync across tabs / windows
-  useEffect(() => {
-    const handler = (e: StorageEvent) => {
-      if (e.key === STORAGE_KEY) setEntries(readStorage());
+    async function load() {
+      setLoading(true);
+      setError(null);
+
+      const userRes = await supabase.auth.getUser();
+      const user = userRes.data.user;
+
+      if (!user) {
+        if (!cancelled) {
+          setEntries([]);
+          setLoading(false);
+        }
+        return;
+      }
+
+      // Step 1: Migrate any legacy localStorage entries to Postgres
+      const legacy = readLegacyLocalStorage();
+      if (legacy.length > 0) {
+        const rows = legacy.map((e) => ({
+          user_id: user.id,
+          file_name: e.fileName,
+          created_at: e.createdAt,
+          analysis: e.analysis,
+          cv_sections: e.cvSections,
+        }));
+        const { error: insertErr } = await supabase.from("history").insert(rows);
+        if (!insertErr) {
+          clearLegacyLocalStorage();
+          if (!cancelled) setMigratedCount(legacy.length);
+        }
+      }
+
+      // Step 2: Fetch entries from Postgres
+      const { data, error: fetchErr } = await supabase
+        .from("history")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(MAX_ENTRIES);
+
+      if (cancelled) return;
+
+      if (fetchErr) {
+        setError(fetchErr.message);
+        setEntries([]);
+      } else {
+        const rows = (data ?? []) as DbRow[];
+        setEntries(rows.map(rowToEntry));
+      }
+      setLoading(false);
+    }
+
+    load();
+    return () => {
+      cancelled = true;
     };
-    window.addEventListener("storage", handler);
-    return () => window.removeEventListener("storage", handler);
   }, []);
 
-  const add = useCallback((params: AddHistoryParams): HistoryEntry => {
-    const entry: HistoryEntry = {
-      id: generateId(),
-      fileName: params.fileName,
-      createdAt: new Date().toISOString(),
-      analysis: params.analysis,
-      cvSections: params.cvSections,
-    };
-    setEntries((prev) => {
-      const next = [entry, ...prev].slice(0, MAX_ENTRIES);
-      writeStorage(next);
-      return next;
-    });
-    return entry;
-  }, []);
+  const add = useCallback(
+    async (params: AddHistoryParams): Promise<HistoryEntry | null> => {
+      const supabase = createClient();
+      const userRes = await supabase.auth.getUser();
+      const user = userRes.data.user;
+      if (!user) return null;
 
-  const remove = useCallback((id: string) => {
-    setEntries((prev) => {
-      const next = prev.filter((e) => e.id !== id);
-      writeStorage(next);
-      return next;
-    });
-  }, []);
+      const { data, error: insertErr } = await supabase
+        .from("history")
+        .insert({
+          user_id: user.id,
+          file_name: params.fileName,
+          analysis: params.analysis,
+          cv_sections: params.cvSections,
+        })
+        .select()
+        .single();
 
-  const clear = useCallback(() => {
-    setEntries([]);
-    writeStorage([]);
-  }, []);
-
-  // Read fresh from storage so it works even before the state has hydrated
-  // (e.g. on first render of /dashboard?id=xxx after opening from /history)
-  const getById = useCallback(
-    (id: string): HistoryEntry | undefined =>
-      readStorage().find((e) => e.id === id),
+      if (insertErr || !data) return null;
+      const entry = rowToEntry(data as DbRow);
+      setEntries((prev) => [entry, ...prev].slice(0, MAX_ENTRIES));
+      return entry;
+    },
     []
   );
 
-  return { entries, add, remove, clear, getById };
+  const remove = useCallback(async (id: string): Promise<void> => {
+    const supabase = createClient();
+    const { error: deleteErr } = await supabase.from("history").delete().eq("id", id);
+    if (!deleteErr) {
+      setEntries((prev) => prev.filter((e) => e.id !== id));
+    }
+  }, []);
+
+  const clear = useCallback(async (): Promise<void> => {
+    const supabase = createClient();
+    const userRes = await supabase.auth.getUser();
+    const user = userRes.data.user;
+    if (!user) return;
+    const { error: deleteErr } = await supabase
+      .from("history")
+      .delete()
+      .eq("user_id", user.id);
+    if (!deleteErr) setEntries([]);
+  }, []);
+
+  const getById = useCallback(
+    async (id: string): Promise<HistoryEntry | undefined> => {
+      const supabase = createClient();
+      const { data, error: fetchErr } = await supabase
+        .from("history")
+        .select("*")
+        .eq("id", id)
+        .single();
+      if (fetchErr || !data) return undefined;
+      return rowToEntry(data as DbRow);
+    },
+    []
+  );
+
+  return { entries, loading, error, migratedCount, add, remove, clear, getById };
 }

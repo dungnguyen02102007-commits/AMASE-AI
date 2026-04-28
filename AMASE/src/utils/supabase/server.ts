@@ -1,5 +1,7 @@
-import { createServerClient } from "@supabase/ssr";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { cookies } from "next/headers";
+
+type CookieToSet = { name: string; value: string; options: CookieOptions };
 
 /**
  * Server-side Supabase client.
@@ -17,14 +19,14 @@ export async function createClient() {
         getAll() {
           return cookieStore.getAll();
         },
-        setAll(cookiesToSet) {
+        setAll(cookiesToSet: CookieToSet[]) {
           try {
             for (const { name, value, options } of cookiesToSet) {
               cookieStore.set(name, value, options);
             }
           } catch {
-            // Server Components can't set cookies — middleware will refresh the
-            // session on the next request, so this is safe to swallow here.
+            // Server Components cannot set cookies; middleware refreshes the session
+            // on the next request, so this is safe to swallow.
           }
         },
       },
