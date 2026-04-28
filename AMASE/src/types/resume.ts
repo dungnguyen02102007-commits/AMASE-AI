@@ -125,6 +125,14 @@ export interface UploadState {
   error: string | null;
 }
 
+export interface HistoryEntry {
+  id: string;
+  fileName: string;
+  createdAt: string; // ISO timestamp
+  analysis: ResumeAnalysis;
+  cvSections: CVSection[];
+}
+
 export interface CompareSlot {
   label: string;
   analysis: ResumeAnalysis | null;

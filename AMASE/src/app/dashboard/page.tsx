@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { mockAnalysis, mockCVSections } from "@/lib/mockData";
 import { ResumeAnalysis, CVSection, FeedbackCVMapping } from "@/types/resume";
 
@@ -16,11 +17,32 @@ import { UploadDropzone } from "@/components/ui/UploadDropzone";
 
 import { useFeedbackHighlight } from "@/hooks/useFeedbackHighlights";
 import { useFileUpload } from "@/hooks/useFileUpload";
+import { useHistory } from "@/hooks/useHistory";
+import { UserMenu } from "@/components/ui/UserMenu";
 
 export default function DashboardPage() {
-  // ── Analysis + CV content state (both replaced on upload) ─────────────
-  const [analysis, setAnalysis] = useState<ResumeAnalysis>(mockAnalysis);
-  const [cvSections, setCvSections] = useState<CVSection[]>(mockCVSections);
+  // ── History (load via ?id=, save on upload) ────────────────────────────
+  const searchParams = useSearchParams();
+  const historyId = searchParams.get("id");
+  const { add: addHistory, getById: getHistoryById } = useHistory();
+
+  // ── Analysis + CV content state ───────────────────────────────────────
+  // If URL has ?id=, hydrate from history on first render to avoid a
+  // mock→real flash. Otherwise start with mock.
+  const [analysis, setAnalysis] = useState<ResumeAnalysis>(() => {
+    if (historyId) {
+      const entry = getHistoryById(historyId);
+      if (entry) return entry.analysis;
+    }
+    return mockAnalysis;
+  });
+  const [cvSections, setCvSections] = useState<CVSection[]>(() => {
+    if (historyId) {
+      const entry = getHistoryById(historyId);
+      if (entry) return entry.cvSections;
+    }
+    return mockCVSections;
+  });
 
   // ── Feedback ↔ CV interaction ─────────────────────────────────────────
   const feedbackMapping = useMemo<FeedbackCVMapping>(() => {
@@ -47,13 +69,28 @@ export default function DashboardPage() {
   // ── Upload ─────────────────────────────────────────────────────────────
   const { upload, handleFile, reset: resetUpload, result: uploadResult } = useFileUpload();
 
-  // Commit upload result — never call setState during render
+  // Reload analysis when ?id= changes (e.g. user picks another entry from /history)
+  useEffect(() => {
+    if (!historyId) return;
+    const entry = getHistoryById(historyId);
+    if (entry) {
+      setAnalysis(entry.analysis);
+      setCvSections(entry.cvSections);
+    }
+  }, [historyId, getHistoryById]);
+
+  // Commit upload result + persist to history
   useEffect(() => {
     if (uploadResult) {
       setAnalysis(uploadResult.analysis);
       setCvSections(uploadResult.cvSections);
+      addHistory({
+        fileName: upload.fileName ?? "resume.pdf",
+        analysis: uploadResult.analysis,
+        cvSections: uploadResult.cvSections,
+      });
     }
-  }, [uploadResult]);
+  }, [uploadResult, addHistory, upload.fileName]);
 
   return (
     <>
@@ -78,7 +115,7 @@ export default function DashboardPage() {
           <div className="flex gap-0.5 bg-black/[0.05] rounded-[10px] p-[3px]">
             {[
               { label: "Dashboard", href: "/dashboard" },
-              { label: "History", href: "#" },
+              { label: "History", href: "/history" },
             ].map((tab, i) => (
               <Link
                 key={tab.label}
@@ -109,9 +146,7 @@ export default function DashboardPage() {
           >
             Improve Resume
           </button>
-          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-white text-[11px] font-bold cursor-pointer">
-            AC
-          </div>
+          <UserMenu />
         </div>
       </nav>
 
