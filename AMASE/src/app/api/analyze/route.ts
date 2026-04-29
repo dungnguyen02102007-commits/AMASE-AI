@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { extractText, getDocumentProxy } from "unpdf";
 import { ResumeAnalysis, CVSection, FeedbackItem } from "@/types/resume";
+import { createClient } from "@/utils/supabase/server";
 
 export const runtime = "nodejs";
 
@@ -108,6 +109,13 @@ function enforceIntegrity(
 }
 
 export async function POST(request: Request): Promise<Response> {
+  // Auth gate: only signed-in users can spend our Anthropic budget.
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const client = new Anthropic();
   try {
     const formData = await request.formData();

@@ -1,12 +1,15 @@
 "use client";
 
-import { useEffect } from "react";
-import { Improvement, ImpactLevel } from "@/types/resume";
+import { useEffect, useState } from "react";
+import { Improvement, ImpactLevel, ResumeAnalysis, CVSection } from "@/types/resume";
 
 interface ImproveDrawerProps {
   open: boolean;
   onClose: () => void;
   improvements: Improvement[];
+  analysis: ResumeAnalysis;
+  cvSections: CVSection[];
+  onRewriteComplete: (newCvSections: CVSection[]) => void;
 }
 
 const impactConfig: Record<ImpactLevel, { label: string; cls: string }> = {
@@ -24,7 +27,13 @@ const categoryColors: Record<string, string> = {
   Education: "bg-slate-50 text-slate-500",
 };
 
-export function ImproveDrawer({ open, onClose, improvements }: ImproveDrawerProps) {
+export function ImproveDrawer({
+  open, onClose, improvements, analysis, cvSections, onRewriteComplete,
+}: ImproveDrawerProps) {
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+
   // Lock body scroll while open
   useEffect(() => {
     document.body.style.overflow = open ? "hidden" : "";
@@ -38,21 +47,54 @@ export function ImproveDrawer({ open, onClose, improvements }: ImproveDrawerProp
     return () => window.removeEventListener("keydown", handler);
   }, [onClose]);
 
+  // Reset transient state when drawer reopens
+  useEffect(() => {
+    if (open) {
+      setError(null);
+      setSuccess(false);
+    }
+  }, [open]);
+
+  async function handleApplyAll() {
+    setError(null);
+    setSuccess(false);
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/rewrite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ analysis, cvSections }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(body.error ?? "Rewrite failed");
+      }
+      const data = (await res.json()) as { cvSections: CVSection[] };
+      onRewriteComplete(data.cvSections);
+      setSuccess(true);
+      // Close after a brief success indication
+      setTimeout(() => {
+        onClose();
+      }, 900);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   const top3 = improvements.slice(0, 3);
 
   return (
     <>
-      {/* Backdrop */}
       <div
         onClick={onClose}
-        className={`fixed inset-0 z-40 bg-black/30 backdrop-blur-[2px] transition-opacity duration-300 ${open ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"}`}
+        className={"fixed inset-0 z-40 bg-black/30 backdrop-blur-[2px] transition-opacity duration-300 " + (open ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none")}
       />
 
-      {/* Drawer panel */}
       <div
-        className={`fixed right-0 top-0 bottom-0 z-50 w-full max-w-[420px] bg-white shadow-2xl flex flex-col transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] ${open ? "translate-x-0" : "translate-x-full"}`}
+        className={"fixed right-0 top-0 bottom-0 z-50 w-full max-w-[420px] bg-white shadow-2xl flex flex-col transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] " + (open ? "translate-x-0" : "translate-x-full")}
       >
-        {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-slate-100">
           <div>
             <h2 className="text-[15px] font-bold tracking-tight">Improve Resume</h2>
@@ -68,64 +110,82 @@ export function ImproveDrawer({ open, onClose, improvements }: ImproveDrawerProp
           </button>
         </div>
 
-        {/* Score potential banner */}
         <div className="mx-6 mt-5 p-4 rounded-xl bg-gradient-to-br from-indigo-50 to-violet-50 border border-indigo-100">
           <div className="flex items-center justify-between mb-3">
             <p className="text-[11px] font-bold uppercase tracking-wider text-indigo-600">Score Potential</p>
             <div className="flex items-center gap-2">
-              <span className="text-[13px] font-extrabold text-slate-700">38 → </span>
-              <span className="text-[13px] font-extrabold text-emerald-600">72–80</span>
+              <span className="text-[13px] font-extrabold text-slate-700">{analysis.score} → </span>
+              <span className="text-[13px] font-extrabold text-emerald-600">{analysis.scorePotential.low}–{analysis.scorePotential.high}</span>
             </div>
           </div>
           <div className="h-2 bg-indigo-100 rounded-full overflow-hidden">
-            <div className="h-full w-[76%] rounded-full bg-gradient-to-r from-indigo-500 to-violet-500" />
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-500"
+              style={{ width: Math.min(100, (analysis.scorePotential.high / 100) * 100) + "%" }}
+            />
           </div>
-          <p className="text-[11px] text-indigo-500 mt-2">Apply all 3 changes to unlock +34–42 points</p>
+          <p className="text-[11px] text-indigo-500 mt-2">
+            Apply all to unlock +{analysis.scorePotential.low - analysis.score}–{analysis.scorePotential.high - analysis.score} points
+          </p>
         </div>
 
-        {/* Top 3 improvements */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-3">
           {top3.map((imp, idx) => {
             const impact = impactConfig[imp.impact];
             const catColor = categoryColors[imp.category] ?? "bg-slate-50 text-slate-500";
-
             return (
               <div
                 key={imp.id}
-                className="rounded-xl border border-slate-100 hover:border-slate-200 hover:shadow-sm transition-all p-4 group"
+                className="rounded-xl border border-slate-100 transition-all p-4"
               >
-                {/* Rank + badges */}
                 <div className="flex items-center gap-2 mb-2.5">
-                  <div className="w-6 h-6 rounded-md bg-slate-100 group-hover:bg-slate-800 transition-colors flex items-center justify-center">
-                    <span className="text-[10px] font-bold text-slate-500 group-hover:text-white transition-colors">
+                  <div className="w-6 h-6 rounded-md bg-slate-100 flex items-center justify-center">
+                    <span className="text-[10px] font-bold text-slate-500">
                       {String(idx + 1).padStart(2, "0")}
                     </span>
                   </div>
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${catColor}`}>
+                  <span className={"text-[10px] font-bold px-2 py-0.5 rounded-md " + catColor}>
                     {imp.category}
                   </span>
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${impact.cls}`}>
+                  <span className={"text-[10px] font-bold px-2 py-0.5 rounded-md " + impact.cls}>
                     {impact.label}
                   </span>
                   <span className="ml-auto text-[11px] font-bold text-emerald-600">{imp.pointsGain} pts</span>
                 </div>
-
-                {/* Suggestion text */}
                 <p className="text-[12.5px] text-slate-600 leading-relaxed">{imp.suggestion}</p>
-
-                {/* Apply button */}
-                <button className="mt-3 w-full py-2 rounded-lg text-[12px] font-semibold bg-slate-900 hover:bg-black text-white transition-colors">
-                  Apply rewrite →
-                </button>
               </div>
             );
           })}
         </div>
 
-        {/* Footer */}
+        {error && (
+          <div className="mx-6 mb-3 px-3 py-2 rounded-lg bg-red-50 border border-red-100 text-[12px] text-red-700">
+            {error}
+          </div>
+        )}
+
+        {success && (
+          <div className="mx-6 mb-3 px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-100 text-[12px] text-emerald-700 flex items-center gap-2">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+            Resume rewritten. Check the CV preview.
+          </div>
+        )}
+
         <div className="px-6 py-4 border-t border-slate-100 bg-slate-50">
-          <button className="w-full py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white text-[13px] font-semibold transition-all shadow-sm hover:shadow-md">
-            Apply All with AI ✦
+          <button
+            onClick={handleApplyAll}
+            disabled={submitting}
+            className="w-full py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white text-[13px] font-semibold transition-all shadow-sm hover:shadow-md disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          >
+            {submitting && (
+              <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+            )}
+            {submitting ? "Rewriting with AI..." : "Apply All with AI ✦"}
           </button>
           <p className="text-[10px] text-center text-slate-400 mt-2">
             AI rewrites preserve your voice and formatting

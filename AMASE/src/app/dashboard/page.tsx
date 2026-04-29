@@ -152,7 +152,14 @@ function DashboardContent() {
         </div>
       </div>
 
-      <ImproveDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} improvements={analysis.improvements} />
+      <ImproveDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        improvements={analysis.improvements}
+        analysis={analysis}
+        cvSections={cvSections}
+        onRewriteComplete={(newSections) => setCvSections(newSections)}
+      />
       <TipsModal open={modalOpen} onClose={() => setModalOpen(false)} feedback={analysis.feedback} />
     </>
   );
