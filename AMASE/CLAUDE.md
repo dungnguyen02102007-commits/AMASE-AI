@@ -15,13 +15,14 @@ No test runner is configured yet.
 
 ## Architecture
 
-**ResumeIQ** is a Next.js 16 App Router frontend prototype for AI-powered resume analysis. It is currently frontend-only — upload, scoring, and AI suggestions are all simulated with mock data. There is no backend, database, or real PDF parsing.
+**ResumeIQ** is a Next.js 16 App Router application for AI-powered resume analysis, backed by Supabase (auth + Postgres history) and the Anthropic Claude API.
 
 ### Data flow
 
-1. User drops a PDF on `UploadDropzone` → `useFileUpload` simulates a multi-step pipeline (uploading → parsing → done) with random scores (40–70 range).
-2. The result object is passed into `src/app/dashboard/page.tsx`, which distributes it to child components.
-3. Mock analysis data lives in `src/lib/mockData.ts`: `mockAnalysis`, `mockCVSections`, and `feedbackCVMapping` (maps feedback IDs → CV line IDs).
+1. User drops a PDF on `UploadDropzone` → `useFileUpload` POSTs to `/api/analyze`.
+2. `/api/analyze` extracts text via `unpdf`, sends to Claude, and returns `{ analysis, cvSections }`.
+3. The result lands in `dashboard/page.tsx`, which distributes it to child components and saves to Supabase history via `useHistory`.
+4. Mock data in `src/lib/mockData.ts` is the default state before any PDF is uploaded.
 
 ### Feedback ↔ CV highlighting
 
@@ -40,7 +41,7 @@ dashboard/page.tsx
 ├── FeedbackSidebar        — 4 accordion sections; click → activates CV highlight
 ├── ImprovementList        — ranked 1–6 improvements with point gains
 ├── CVPreview              — sticky; highlights flagged/active lines
-├── ImproveDrawer          — slide-in: top 3 improvements + "Apply with AI" (stub)
+├── ImproveDrawer          — slide-in: top 3 improvements + "Apply All with AI" (calls /api/rewrite)
 └── TipsModal              — categorized resume tips with personalized issues
 ```
 
@@ -57,10 +58,16 @@ Color thresholds: red < 50, amber 50–75, green > 75.
 
 All domain types are in `src/types/resume.ts`: `ResumeAnalysis`, `Feedback`, `CVSection`, `Improvement`, `UploadState`. Keep these as the source of truth when extending functionality.
 
-## What's stubbed / not yet real
+## What's real vs. still pending
 
-- PDF upload does not parse file content
-- Scoring is random (40–70); analysis data comes from `mockData.ts`
-- Login redirects after a 700 ms delay; no auth exists
-- "Apply with AI" and Download/Share buttons are non-functional
-- No backend, API routes, or persistence
+All core flows are live:
+- PDF upload → real text extraction (`unpdf`) → Claude analysis (`/api/analyze`)
+- AI rewrite via `/api/rewrite` (Apply All with AI in `ImproveDrawer`)
+- Supabase email/password auth with middleware protection on `/dashboard` and `/history`
+- History persisted in Supabase `history` table; `useHistory` hook migrates legacy localStorage on first load
+- Download Improved — real PDF via `@react-pdf/renderer` (`src/lib/generateResumePdf.tsx`), dynamically imported
+- Share button uses Web Share API on mobile / clipboard fallback on desktop
+
+Remaining gaps:
+- Share on desktop copies plain text — no shareable link
+- `mockData.ts` is still the default shown before any PDF is uploaded

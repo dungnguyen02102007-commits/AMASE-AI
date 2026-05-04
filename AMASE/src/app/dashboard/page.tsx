@@ -143,12 +143,12 @@ function DashboardContent() {
           </div>
 
           <div className="hidden lg:block">
-            <CVPreview sections={cvSections} activeCVLineId={activeCVLineId} score={analysis.score} fileName={upload.fileName ?? "resume.pdf"} />
+            <CVPreview sections={cvSections} activeCVLineId={activeCVLineId} score={analysis.score} fileName={upload.fileName ?? "resume.pdf"} candidateName={analysis.candidateName} />
           </div>
         </div>
 
         <div className="lg:hidden mt-6">
-          <CVPreview sections={cvSections} activeCVLineId={activeCVLineId} score={analysis.score} fileName={upload.fileName ?? "resume.pdf"} />
+          <CVPreview sections={cvSections} activeCVLineId={activeCVLineId} score={analysis.score} fileName={upload.fileName ?? "resume.pdf"} candidateName={analysis.candidateName} />
         </div>
       </div>
 

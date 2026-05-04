@@ -1,12 +1,60 @@
 "use client";
 
+import { useState } from "react";
 import { CVSection, CVSectionContent, CVBulletContent } from "@/types/resume";
+
+function sectionsToText(sections: CVSection[]): string {
+  const lines: string[] = [];
+  for (const section of sections) {
+    const { type, title, content } = section;
+    if (type === "header") {
+      lines.push(content.heading);
+      if (content.subheading) lines.push(content.subheading);
+      if (content.text) lines.push(content.text);
+      lines.push("");
+      continue;
+    }
+    lines.push(title.toUpperCase());
+    lines.push("─".repeat(40));
+    if (content.heading) {
+      const headingLine = content.date
+        ? `${content.heading}  |  ${content.date}`
+        : content.heading;
+      lines.push(headingLine);
+    }
+    if (content.company || content.location) {
+      lines.push([content.company, content.location].filter(Boolean).join(" · "));
+    }
+    if (content.subheading && !content.company) lines.push(content.subheading);
+    if (content.text) lines.push(content.text);
+    if (content.bullets) {
+      for (const b of content.bullets) {
+        lines.push(`  • ${b.text}`);
+      }
+    }
+    lines.push("");
+  }
+  return lines.join("\n").trimEnd();
+}
+
+function downloadText(text: string, fileName: string) {
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 
 interface CVPreviewProps {
   sections: CVSection[];
   activeCVLineId: string | null;
   score: number;
   fileName?: string;
+  candidateName?: string;
 }
 
 function CVHeader({ content }: { content: CVSectionContent }) {
@@ -144,7 +192,19 @@ function ScoreBadge({ score }: { score: number }) {
   );
 }
 
-export function CVPreview({ sections, activeCVLineId, score, fileName = "resume.pdf" }: CVPreviewProps) {
+export function CVPreview({ sections, activeCVLineId, score, fileName = "resume.pdf", candidateName = "" }: CVPreviewProps) {
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  async function handleDownloadPdf() {
+    setIsGenerating(true);
+    try {
+      const { downloadResumePdf } = await import("@/lib/generateResumePdf");
+      await downloadResumePdf(sections, candidateName || fileName.replace(/\.pdf$/i, ""));
+    } finally {
+      setIsGenerating(false);
+    }
+  }
+
   return (
     <div className="sticky top-6 flex flex-col">
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden flex flex-col">
@@ -196,10 +256,36 @@ export function CVPreview({ sections, activeCVLineId, score, fileName = "resume.
         </div>
 
         <div className="px-4 py-3 bg-slate-50 border-t border-slate-100 flex gap-2 flex-shrink-0">
-          <button className="flex-1 py-2 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-[12px] font-semibold transition-colors">
-            Download Improved
+          <button
+            onClick={() => void handleDownloadPdf()}
+            disabled={isGenerating}
+            className="flex-1 py-2 rounded-lg bg-slate-800 hover:bg-slate-900 disabled:opacity-60 disabled:cursor-not-allowed text-white text-[12px] font-semibold transition-colors flex items-center justify-center gap-1.5"
+          >
+            {isGenerating ? (
+              <>
+                <svg className="animate-spin h-3 w-3 flex-shrink-0" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" opacity="0.25" />
+                  <path fill="currentColor" opacity="0.75" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                Generating…
+              </>
+            ) : "Download Improved"}
           </button>
-          <button className="px-3 py-2 rounded-lg border border-slate-200 hover:bg-white text-slate-600 text-[12px] font-semibold transition-colors">
+          <button
+            onClick={() => {
+              if (navigator.share) {
+                void navigator.share({
+                  title: "My Improved Resume",
+                  text: sectionsToText(sections),
+                });
+              } else {
+                void navigator.clipboard.writeText(sectionsToText(sections)).then(() => {
+                  alert("Resume text copied to clipboard!");
+                });
+              }
+            }}
+            className="px-3 py-2 rounded-lg border border-slate-200 hover:bg-white text-slate-600 text-[12px] font-semibold transition-colors"
+          >
             Share
           </button>
         </div>
